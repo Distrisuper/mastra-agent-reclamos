@@ -44,6 +44,19 @@ export async function procesarIngresoReclamo(
         thread: threadId,
         resource: resourceId,
       },
+      tracingOptions: {
+        tags: ["ingest", source],
+        metadata: {
+          canal: payload.source ?? "external",
+          reporterId: payload.reporter.id,
+          reporterName: payload.reporter.name,
+          conversationId: payload.conversationId,
+          messageId: payload.messageId,
+          threadId,
+          resourceId,
+          hasAttachment: !!(payload.metadata?.attachmentUrl),
+        },
+      },
     });
 
     // Detectar si submit_claim fue ejecutado exitosamente

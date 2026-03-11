@@ -1,46 +1,19 @@
 /**
  * Tool para registrar un reclamo confirmado.
- * Hace INSERT directo en PostgreSQL (schema: reclamos).
+ * Delega la persistencia al webhook n8n "Endpoint guardar reclamo".
  * Los datos de contexto (canal, creado_por_ref, adjunto_url) se obtienen
  * del RequestContext, no del LLM.
  */
 
 import { createTool } from "@mastra/core/tools";
+import { SpanType } from "@mastra/core/observability";
 import { z } from "zod";
-import { getPool } from "../services/database";
 
-const INSERT_RECLAMO_SQL = `
-WITH inserted AS (
-  INSERT INTO reclamos (
-    canal_id, creado_por_nombre, creado_por_ref,
-    tipo, area_id, sistema_id, prioridad,
-    cliente_codigo, motivo, descripcion,
-    adjunto_url, estado_id
-  )
-  VALUES (
-    (SELECT id FROM canales  WHERE nombre = $1),
-    $2, $3, $4,
-    (SELECT id FROM areas    WHERE nombre = $5),
-    (SELECT id FROM sistemas WHERE nombre = $6),
-    $7, $8, $9, $10, $11,
-    (SELECT id FROM estados  WHERE nombre = 'Abierto')
-  )
-  RETURNING id, codigo
-),
-evento AS (
-  INSERT INTO reclamos_eventos (reclamo_id, tipo, estado_id, autor_nombre, contenido)
-  SELECT
-    inserted.id,
-    'cambio_estado',
-    (SELECT id FROM estados WHERE nombre = 'Abierto'),
-    'Sistema',
-    'Reclamo creado'
-  FROM inserted
-  RETURNING id
-)
-SELECT inserted.id AS reclamo_id, inserted.codigo AS reclamo_codigo
-FROM inserted;
-`;
+const N8N_GUARDAR_RECLAMO_URL =
+  process.env.N8N_GUARDAR_RECLAMO_URL ??
+  "http://distrimdp.dvrdns.org:5678/webhook/guardar-reclamo";
+
+const FETCH_TIMEOUT_MS = 15_000;
 
 export const submitClaimTool = createTool({
   id: "submit-claim",
@@ -87,7 +60,20 @@ export const submitClaimTool = createTool({
     const adjunto_url =
       (context?.requestContext?.get("adjunto_url") as string) ?? null;
 
-    // --- Validaciones ---
+    // --- Span: validación de campos requeridos ---
+    const validationSpan = context?.tracingContext?.currentSpan?.createChildSpan({
+      type: SpanType.GENERIC,
+      name: "submit-claim.validation",
+      input: {
+        tipo_reclamo: inputData.tipo_reclamo,
+        sistema: inputData.sistema,
+        area: inputData.area,
+        prioridad: inputData.prioridad,
+        canal,
+        tieneNCliente: !!inputData.n_cliente,
+      },
+    });
+
     const errores: string[] = [];
 
     if (!inputData.nombre?.trim()) errores.push("nombre es requerido");
@@ -109,6 +95,10 @@ export const submitClaimTool = createTool({
     }
 
     if (errores.length > 0) {
+      validationSpan?.end({
+        output: { valid: false, errores },
+        metadata: { errorCount: errores.length },
+      });
       return {
         success: false,
         mensaje: `Validación fallida: ${errores.join(", ")}`,
@@ -116,47 +106,108 @@ export const submitClaimTool = createTool({
       };
     }
 
-    // --- INSERT en PostgreSQL ---
+    validationSpan?.end({
+      output: { valid: true },
+      metadata: { errorCount: 0 },
+    });
+
+    // --- Span: POST al webhook n8n ---
+    const n8nSpan = context?.tracingContext?.currentSpan?.createChildSpan({
+      type: SpanType.GENERIC,
+      name: "n8n.guardar_reclamo",
+      input: {
+        sistema: inputData.sistema,
+        area: inputData.area,
+        tipo: inputData.tipo_reclamo,
+        prioridad: inputData.prioridad,
+        canal,
+        tieneAdjunto: !!adjunto_url,
+      },
+    });
+
     try {
-      const pool = getPool();
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-      const params = [
-        canal,                                    // $1
-        inputData.nombre,                         // $2
-        creado_por_ref,                           // $3
-        inputData.tipo_reclamo,                   // $4
-        inputData.area,                           // $5
-        inputData.sistema,                        // $6
-        inputData.prioridad,                      // $7
-        inputData.n_cliente || null,              // $8
-        inputData.motivo,                         // $9
-        inputData.descripcion,                    // $10
-        adjunto_url,                              // $11
-      ];
+      const fetchStart = Date.now();
+      const response = await fetch(N8N_GUARDAR_RECLAMO_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: inputData.nombre,
+          tipo_reclamo: inputData.tipo_reclamo,
+          sistema: inputData.sistema,
+          area: inputData.area,
+          prioridad: inputData.prioridad,
+          motivo: inputData.motivo,
+          descripcion: inputData.descripcion,
+          canal,
+          n_cliente: inputData.n_cliente || null,
+          creado_por_ref,
+          adjunto_url,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const fetchMs = Date.now() - fetchStart;
 
-      const result = await pool.query(INSERT_RECLAMO_SQL, params);
-
-      const row = result.rows?.[0];
-      if (!row?.reclamo_codigo) {
+      if (!response.ok) {
+        const body = await response.text();
+        n8nSpan?.error({
+          error: new Error(`n8n respondió ${response.status}: ${body}`),
+          endSpan: true,
+          metadata: { fetchMs, status: response.status },
+        });
         return {
           success: false,
-          mensaje:
-            "El INSERT se ejecutó pero no se obtuvo el código del reclamo",
-          errores: ["No se recibió reclamo_codigo del RETURNING"],
+          mensaje: `Error del webhook n8n (HTTP ${response.status})`,
+          errores: [body],
         };
       }
 
+      const data = await response.json() as {
+        success: boolean;
+        reclamo_codigo?: string;
+        mensaje: string;
+        errores?: string[];
+      };
+
+      if (!data.success) {
+        n8nSpan?.end({
+          output: data,
+          metadata: { fetchMs },
+        });
+        return {
+          success: false,
+          mensaje: data.mensaje,
+          errores: data.errores,
+        };
+      }
+
+      n8nSpan?.end({
+        output: { reclamo_codigo: data.reclamo_codigo },
+        metadata: { fetchMs },
+      });
+
       return {
         success: true,
-        reclamo_codigo: row.reclamo_codigo,
-        mensaje: `Reclamo ${row.reclamo_codigo} registrado exitosamente`,
+        reclamo_codigo: data.reclamo_codigo,
+        mensaje: data.mensaje,
       };
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Error desconocido";
+        error instanceof Error
+          ? error.name === "AbortError"
+            ? `Timeout: n8n no respondió en ${FETCH_TIMEOUT_MS / 1000}s`
+            : error.message
+          : "Error desconocido";
+      n8nSpan?.error({
+        error: error instanceof Error ? error : new Error(message),
+        endSpan: true,
+      });
       return {
         success: false,
-        mensaje: `Error al insertar reclamo en la base de datos: ${message}`,
+        mensaje: `Error al enviar reclamo al webhook n8n: ${message}`,
         errores: [message],
       };
     }
