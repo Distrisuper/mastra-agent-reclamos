@@ -22,6 +22,36 @@ export async function procesarIngresoReclamo(
   const threadId = payload.conversationId.trim();
   const resourceId = `${source}:${reporterId}`;
 
+  // Reset de conversación con "#"
+  if (payload.message.trim() === "#") {
+    try {
+      const memory = await agent.getMemory();
+      if (memory) {
+        await memory.deleteThread(threadId);
+      }
+      console.log(`[procesar-ingreso-reclamo] Sesión reiniciada — threadId=${threadId} resourceId=${resourceId}`);
+    } catch (err) {
+      console.error("[procesar-ingreso-reclamo] Error al borrar thread para reset:", err);
+    }
+    return {
+      success: true,
+      replyText: "✅ Sesión reiniciada. Podés empezar un reclamo nuevo.",
+      outcome: "conversing",
+      conversation: {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        threadId,
+        resourceId,
+      },
+      source: {
+        name: payload.source || "external",
+        timestamp: payload.timestamp || new Date().toISOString(),
+      },
+      claimCode: null,
+      claimData: null,
+    };
+  }
+
   try {
     const requestContext = new RequestContext([
       ["userName", payload.reporter.name],
@@ -39,7 +69,7 @@ export async function procesarIngresoReclamo(
 
     const response = await agent.generate(payload.message, {
       requestContext,
-      maxSteps: 6,
+      maxSteps: 10,
       memory: {
         thread: threadId,
         resource: resourceId,
@@ -76,6 +106,11 @@ export async function procesarIngresoReclamo(
       | undefined;
     const isSubmitted = submitData?.success === true;
 
+    // Extraer claimData desde submitClaimTool o parseClaimTemplateTool
+    const claimData = isSubmitted
+      ? extractClaimData(toolCalls, "submitClaimTool")
+      : extractClaimData(toolCalls, "parseClaimTemplateTool");
+
     return {
       success: true,
       replyText: response.text,
@@ -93,9 +128,7 @@ export async function procesarIngresoReclamo(
       claimCode: isSubmitted
         ? (submitData?.reclamo_codigo ?? null)
         : null,
-      claimData: isSubmitted
-        ? extractClaimData(toolCalls)
-        : null,
+      claimData: claimData,
     };
   } catch (error) {
     const message =
@@ -122,13 +155,21 @@ export async function procesarIngresoReclamo(
 }
 
 function extractClaimData(
-  toolCalls: Array<{ payload: { toolName: string; args?: Record<string, unknown> } }>
+  toolCalls: Array<{ payload: { toolName: string; args?: Record<string, unknown> } }>,
+  toolName: string = "submitClaimTool"
 ): Record<string, unknown> | null {
-  const submitCall = toolCalls.find(
-    (tc) => tc.payload.toolName === "submitClaimTool"
+  const targetCall = toolCalls.find(
+    (tc) => tc.payload.toolName === toolName
   );
-  if (!submitCall?.payload.args) return null;
-  return submitCall.payload.args;
+  if (!targetCall?.payload.args) return null;
+  
+  // Si es parseClaimTemplateTool, extraer los datos del resultado
+  if (toolName === "parseClaimTemplateTool") {
+    const result = targetCall.payload.args as { datos?: Record<string, unknown> };
+    return result.datos || null;
+  }
+  
+  return targetCall.payload.args;
 }
 
 function normalizarSegmento(value: string): string {
