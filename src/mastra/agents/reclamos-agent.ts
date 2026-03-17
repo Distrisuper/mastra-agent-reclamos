@@ -1,5 +1,5 @@
 /**
- * Agente principal de reclamos — "Sofía".
+ * Agente principal de reclamos.
  * Usa Dynamic Instructions con RequestContext para inyectar
  * userName y attachmentUrl por request.
  * Memory con thread/resource para conversación multi-turno.
@@ -10,12 +10,14 @@ import { Memory } from "@mastra/memory";
 
 import { buildSystemPrompt } from "../prompts/system-prompt-builder";
 import { submitClaimTool } from "../tools/submit-claim-tool";
+import { checkDuplicateClaimTool } from "../tools/check-duplicate-claim-tool";
+import { parseClaimTemplateTool } from "../tools/parse-claim-template-tool";
 
 export const reclamosAgent = new Agent({
   id: "reclamos-agent",
-  name: "Agente de Reclamos - Sofía",
+  name: "Agente de Reclamos",
   description:
-    "Agente conversacional para recolección y registro de reclamos. Personalidad Sofía, español rioplatense.",
+    "Agente conversacional para recolección y registro de reclamos. Español rioplatense.",
 
   // Dynamic instructions: se construyen por request usando RequestContext
   instructions: async ({ requestContext }) => {
@@ -30,7 +32,7 @@ export const reclamosAgent = new Agent({
     process.env.OPENROUTER_MODEL ||
     "openrouter/google/gemini-2.5-flash",
 
-  tools: { submitClaimTool },
+  tools: { parseClaimTemplateTool, checkDuplicateClaimTool, submitClaimTool },
 
   memory: new Memory({
     options: {

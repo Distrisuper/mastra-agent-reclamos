@@ -4,6 +4,7 @@
  */
 
 import { createTool } from "@mastra/core/tools";
+import { SpanType } from "@mastra/core/observability";
 import { z } from "zod";
 
 export type EstadoReclamo =
@@ -146,15 +147,28 @@ export const consultaEstadoTool = createTool({
   inputSchema,
   outputSchema,
 
-  execute: async (inputData) => {
+  execute: async (inputData, context) => {
+    const lookupSpan = context?.tracingContext?.currentSpan?.createChildSpan({
+      type: SpanType.GENERIC,
+      name: "consulta-estado.lookup",
+      input: { reclamoId: inputData.reclamoId },
+      metadata: { source: "mock-db" },
+    });
+
     try {
+      const lookupStart = Date.now();
       await new Promise((resolve) =>
         setTimeout(resolve, 100 + Math.random() * 200)
       );
+      const lookupMs = Date.now() - lookupStart;
 
       const reclamo = mockReclamos[inputData.reclamoId.toUpperCase()];
 
       if (!reclamo) {
+        lookupSpan?.end({
+          output: { encontrado: false },
+          metadata: { lookupMs, source: "mock-db" },
+        });
         return {
           encontrado: false,
           mensaje: `No se encontró el reclamo con ID: ${inputData.reclamoId}`,
@@ -179,11 +193,27 @@ export const consultaEstadoTool = createTool({
         timestamp: new Date().toISOString(),
       };
 
+      lookupSpan?.end({
+        output: {
+          encontrado: true,
+          estado: reclamo.estado,
+          prioridad: reclamo.prioridad,
+        },
+        metadata: {
+          lookupMs,
+          source: "mock-db",
+          historialCount: reclamo.historial?.length ?? 0,
+        },
+      });
+
       return resultado;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Error desconocido al consultar estado";
-
+      lookupSpan?.error({
+        error: error instanceof Error ? error : new Error(errorMessage),
+        endSpan: true,
+      });
       return {
         encontrado: false,
         mensaje: `Error al consultar estado del reclamo: ${errorMessage}`,

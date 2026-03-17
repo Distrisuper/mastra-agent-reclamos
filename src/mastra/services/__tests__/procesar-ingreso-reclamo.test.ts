@@ -13,8 +13,14 @@ const basePayload: IngestReclamoPayload = {
 function makeMockAgent(overrides: {
   text?: string;
   steps?: Array<{
-    toolCalls?: Array<{ toolName: string; args?: Record<string, unknown> }>;
-    toolResults?: Array<{ toolName: string; result: Record<string, unknown> }>;
+    toolCalls?: Array<{
+      type?: string;
+      payload: { toolName: string; args?: Record<string, unknown>; toolCallId?: string };
+    }>;
+    toolResults?: Array<{
+      type?: string;
+      payload: { toolName: string; result: Record<string, unknown>; toolCallId?: string };
+    }>;
   }>;
   shouldThrow?: boolean;
 }) {
