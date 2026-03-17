@@ -1,6 +1,6 @@
 /**
  * Punto de entrada principal de la configuración de Mastra.
- * Registra el agente de reclamos (Sofía) y el tool submit_claim.
+ * Registra el agente de reclamos y el tool submit_claim.
  */
 
 import { Mastra } from "@mastra/core/mastra";
@@ -20,6 +20,7 @@ import { submitClaimTool } from "./tools/submit-claim-tool";
 import { checkDuplicateClaimTool } from "./tools/check-duplicate-claim-tool";
 import { consultaEstadoTool } from "./tools/consulta-estado-tool";
 import { closePool } from "./services/database";
+import { postSubmitNotifications } from "./workflows/post-submit-notifications";
 
 /**
  * Custom span processor that enriches every span with deployment metadata.
@@ -50,6 +51,10 @@ export const mastra = new Mastra({
     submitClaimTool,
     checkDuplicateClaimTool,
     consultaEstadoTool,
+  },
+
+  workflows: {
+    postSubmitNotifications,
   },
 
   storage: new LibSQLStore({

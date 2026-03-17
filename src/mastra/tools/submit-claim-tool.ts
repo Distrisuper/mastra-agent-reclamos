@@ -177,10 +177,15 @@ export const submitClaimTool = createTool({
           output: data,
           metadata: { fetchMs },
         });
+        const rawErrores = data.errores;
         return {
           success: false,
           mensaje: data.mensaje,
-          errores: data.errores,
+          errores: Array.isArray(rawErrores)
+            ? rawErrores
+            : rawErrores
+              ? [String(rawErrores)]
+              : undefined,
         };
       }
 
@@ -188,6 +193,28 @@ export const submitClaimTool = createTool({
         output: { reclamo_codigo: data.reclamo_codigo },
         metadata: { fetchMs },
       });
+
+      // Fire-and-forget: notificaciones post-submit sin bloquear la respuesta
+      if (data.reclamo_codigo) {
+        const wf = context?.mastra?.getWorkflow("postSubmitNotifications");
+        if (wf) {
+          wf.createRun().then((run) =>
+            run.start({
+              inputData: {
+                reclamo_codigo: data.reclamo_codigo!,
+                sistema: inputData.sistema,
+                area: inputData.area,
+                prioridad: inputData.prioridad,
+                motivo: inputData.motivo,
+                nombre: inputData.nombre,
+                tipo_reclamo: inputData.tipo_reclamo,
+              },
+            })
+          ).catch((err) => {
+            console.error("Post-submit notification workflow failed:", err);
+          });
+        }
+      }
 
       return {
         success: true,

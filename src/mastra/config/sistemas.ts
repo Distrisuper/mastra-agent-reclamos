@@ -11,7 +11,8 @@ export interface Sistema {
     | "Interno"
     | "Infraestructura"
     | "Logistica"
-    | "Administracion";
+    | "Administracion"
+    | "Sistemas";
   descripcion: string;
   aliases?: string[];
 }
@@ -54,12 +55,12 @@ export const sistemas: Record<string, Sistema> = {
     categoria: "Comunicacion",
     descripcion: "Sistema de envío de emails automáticos a clientes",
   },
-  MARY_IA: {
-    nombre: "Mary IA",
+  IA_BOT_MARY: {
+    nombre: "IA Bot Mary",
     categoria: "Comunicacion",
     descripcion:
       "Bot de WhatsApp para atención automatizada a clientes (Bota/Bot)",
-    aliases: ["bot", "bota"],
+    aliases: ["bot", "bota", "mary ia"],
   },
   VERSUS: {
     nombre: "Versus",
@@ -101,6 +102,12 @@ export const sistemas: Record<string, Sistema> = {
     nombre: "Central Habilitaciones",
     categoria: "Ventas/Comercial",
     descripcion: "Sistema de habilitación y crédito de clientes",
+  },
+  NO_DEFINIDO: {
+    nombre: "No definido",
+    categoria: "Interno",
+    descripcion:
+      "Usar cuando el sistema afectado no está claro o no aplica ninguno específico",
   },
 };
 

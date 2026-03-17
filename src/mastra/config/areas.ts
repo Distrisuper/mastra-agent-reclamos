@@ -103,6 +103,20 @@ export const areas: Record<string, Area> = {
       "Solo cuando el reclamo no tiene un área específica responsable o involucra decisiones que superan las áreas operativas",
     motivosFrecuentes: ["Comunicación", "Otros"],
   },
+  CONTABILIDAD: {
+    id: "CONTABILIDAD",
+    nombre: "Contabilidad",
+    descripcion:
+      "Problemas contables, asientos, conciliaciones, balances e informes financieros",
+    criterioDerivacion:
+      "Cuando el problema involucra registros contables, conciliaciones bancarias, balances o informes financieros",
+    motivosFrecuentes: [
+      "Error en asientos",
+      "Conciliación bancaria",
+      "Error en balance",
+    ],
+    slackChannel: "#conta",
+  },
 };
 
 export function getAreaById(areaId: string): Area | undefined {
