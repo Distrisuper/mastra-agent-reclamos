@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { submitClaimTool } from "../submit-claim-tool";
 
 const validInput = {
@@ -21,6 +21,10 @@ const makeContext = () => ({
 });
 
 describe("submitClaimTool validations", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("rejects empty nombre", async () => {
     const result = (await submitClaimTool.execute!(
       { ...validInput, nombre: "" },
@@ -50,13 +54,26 @@ describe("submitClaimTool validations", () => {
     );
   });
 
-  it("passes validation for complete Interno claim (fails at DB)", async () => {
-    // Without POSTGRES_URL this will throw at getPool()
-    await expect(
-      submitClaimTool.execute!(validInput, makeContext() as any),
-    ).resolves.toMatchObject({
-      success: false,
-      // The error comes from missing POSTGRES_URL or DB connection
+  it("passes validation and submits to n8n webhook", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        reclamo_codigo: "REC-TEST-001",
+        mensaje: "Guardado",
+      }),
     });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = (await submitClaimTool.execute!(
+      validInput,
+      makeContext() as any,
+    )) as { success: boolean; reclamo_codigo?: string };
+
+    expect(result.success).toBe(true);
+    expect(result.reclamo_codigo).toBe("REC-TEST-001");
+    expect(fetchMock).toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init?.method).toBe("POST");
   });
 });
